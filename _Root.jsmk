@@ -1,0 +1,151 @@
+Project.EstablishDomain("tungsten", /(gcc|vs)/);
+
+let platform = jsmk.GetFramework("platform", "<host>");
+Project.AddFrameworks([platform]);
+
+let defs = {
+    LODEPNG_NO_COMPILE_DISK: 1,
+    RAPIDJSON_HAS_STDSTRING: 1,
+    EMBREE_STATIC_LIB: null,
+    STBI_NO_STDIO: 1,
+    USE_IPV6: 1,
+    _MBCS: null,
+
+    INSTALL_PREFIX: '"dbadb_"', // untested
+};
+
+if(Toolset.TargetPlatform === "win32")
+{
+    Object.assign(defs, {
+        "__SSE__": null
+    });
+}
+
+if(Toolset.Name.match(/^vs/))
+{
+    Object.assign(defs, {
+        CONSTEXPR: "const",
+        NOMINMAX: null,
+    });
+}
+else {
+    Object.assign(defs, {
+        CONSTEXPR: "constexpr",
+    });
+}
+
+Project.Define(defs);
+
+Project.AddSearchpaths("Compile", [
+    "src/core",
+    "src/thirdparty",
+]);
+
+let Embree = Project.NewProject("../embree");
+Project.AddSearchpaths("Compile", Embree.Exports.IncludePaths);
+Project.AddLibraries(Embree.Exports.Libs);
+
+
+Project.NewProject("src/thirdparty", {
+    init: function(proj) {
+        let defs = {};
+        Object.assign(defs, {
+            RAPIDJSON_HAS_STDSTRING: 1,
+            STBI_NO_STDIO: 1,
+            LODEPNG_NO_COMPILE_DISK: 1,
+            USE_IPV6: 1
+        });
+        proj.Define(defs);
+        let m = proj.NewModule("libthirdparty");
+        let tcpp = m.NewTask("compile", "cpp->o", {
+                inputs: [
+                    "lodepng/lodepng.cpp",
+                    "sobol/sobol.cpp",
+                    "skylight/ArHosekSkyModel.cpp"
+                ],
+            });
+        let tcc = m.NewTask("compile", "c->o", {
+                inputs: [
+                    "civetweb/civetweb.c",
+                    "stbi/stb_image.c",
+                    "miniz/miniz.c",
+                ],
+            });
+        m.NewTask("libthirdparty", "o->a", {
+                inputs: [].concat(
+                            tcc.GetOutputs(),
+                            tcpp.GetOutputs()),
+            });
+    },
+});
+
+Project.NewProject("src/core", {
+    init: function(proj) {
+        let defs = {};
+        let m = proj.NewModule("libcore");
+        let t = m.NewTask("compile", "cpp->o", {
+                inputs: [].concat(
+                    Project.Glob("*.cpp"),
+                    Project.Glob("bsdfs/*.cpp"),
+                    Project.Glob("bvh/*.cpp"),
+                    Project.Glob("cameras/*.cpp"),
+                    Project.Glob("grids/*.cpp"),
+                    Project.Glob("integrators/*.cpp"),
+                    Project.Glob("integrators/bidirectional_path_tracer/*.cpp"),
+                    Project.Glob("integrators/kelemen_mlt/*.cpp"),
+                    Project.Glob("integrators/light_tracer/*.cpp"),
+                    Project.Glob("integrators/path_tracer/*.cpp"),
+                    Project.Glob("integrators/photon_map/*.cpp"),
+                    Project.Glob("integrators/progressive_photon_map/*.cpp"),
+                    Project.Glob("io/*.cpp"),
+                    Project.Glob("math/*.cpp"),
+                    Project.Glob("media/*.cpp"),
+                    Project.Glob("phasefunctions/*.cpp"),
+                    Project.Glob("primitives/*.cpp"),
+                    Project.Glob("primitives/mc-loader/*.cpp"),
+                    Project.Glob("renderer/*.cpp"),
+                    Project.Glob("samplerecords/*.cpp"),
+                    Project.Glob("sampling/*.cpp"),
+                    Project.Glob("sse/*.cpp"),
+                    Project.Glob("textures/*.cpp"),
+                    Project.Glob("thread/*.cpp")
+                ),
+                });
+        m.NewTask("libcore", "o->a", {
+                inputs: t.GetOutputs()
+            });
+    },
+});
+
+// apps -------------------
+Project.NewProject("src", {
+    barrier: "before",
+    init: function(proj) {
+        let apps = [
+            "obj2json",
+            "json2xml",
+            "scenemanip",
+            "denoiser",
+            "tungsten",
+            "tungsten-server"
+        ];
+        for(let app of apps)
+        {
+            let p = proj.NewProject(app, {
+                init: function(subproj) {
+                    let m = subproj.NewModule(app);
+                    let t = m.NewTask("compile", "cpp->o", {
+                            inputs: Project.Glob("*.cpp"),
+                        });
+                    m.NewTask(app, "cpp.o->exe", {
+                            inputs: [].concat(
+                                t.GetOutputs(),
+                                proj.FindModuleOutputs("libcore"),
+                                proj.FindModuleOutputs("libthirdparty")
+                            ),
+                    });
+                }
+            });
+        }
+    },
+});
